@@ -311,6 +311,11 @@ def submit_lead():
             return jsonify({'success': False, 'error': 'Имя и телефон обязательны'}), 400
 
         import requests
+
+        # ВАЖНО: BITRIX_WEBHOOK ДОЛЖЕН ЗАКАНЧИВАТЬСЯ НА /rest/.../КЛЮЧ/
+        # БЕЗ crm.lead.add.json В КОНЦЕ
+        url = BITRIX_WEBHOOK.rstrip('/') + '/crm.lead.add.json'
+
         payload = {
             'fields': {
                 'TITLE': 'Заявка НДС2026 с WebApp',
@@ -322,21 +327,30 @@ def submit_lead():
                     f'Телефон: {phone}\n'
                     f'Создано: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}'
                 ),
-                'SOURCE_ID': 'Telegram НДС2026'
+                'SOURCE_ID': 'TELEGRAM_WEBAPP'
+            },
+            'params': {
+                'REGISTER_SONET_EVENT': 'Y'
             }
         }
-        r = requests.post(BITRIX_WEBHOOK + 'crm.lead.add.json', json=payload, timeout=10)
+
+        r = requests.post(url, json=payload, timeout=10)
         resp_json = r.json()
         logger.info(f"Bitrix lead response: {resp_json}")
 
         if resp_json.get('result'):
             return jsonify({'success': True, 'lead_id': resp_json['result']}), 200
         else:
-            return jsonify({'success': False, 'error': 'Bitrix error', 'detail': resp_json}), 500
+            # Пробрасываем текст ошибки наружу, чтобы её видеть
+            return jsonify({
+                'success': False,
+                'error': resp_json.get('error'),
+                'error_description': resp_json.get('error_description'),
+                'raw': resp_json
+            }), 500
     except Exception as e:
         logger.error(f"Ошибка submit-lead: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 # ================ ЗАПУСК БОТА (POLLING) ===============
 async def main():
