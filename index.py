@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import aiohttp
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
+
 load_dotenv()
 
 # ═══════════════════════════════════════════════════════════════
