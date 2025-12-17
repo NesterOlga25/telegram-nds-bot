@@ -19,7 +19,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', '8193790556:AAFDGDApuUz0tyEiK5I2bapp0VdUHF2X9
 BITRIX_WEBHOOK = os.getenv('BITRIX_WEBHOOK', 'https://khakasia.bitrix24.ru/rest/10704/kohg28vjqkuyyt2x/')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '-1003585038755'))
 ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '778115078').split(',')]
-WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://ВАШ_ПРОЕКТ.vercel.app')
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://telegram-nds-bot.vercel.app')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
