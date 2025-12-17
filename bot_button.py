@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -10,16 +10,15 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import aiohttp
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+import threading
 
-# Загрузка переменных окружения
 load_dotenv()
 
-# Настройки (замените или используйте переменные окружения)
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8193790556:AAFDGDApuUz0tyEiK5I2bapp0VdUHF2X9PM')
 BITRIX_WEBHOOK = os.getenv('BITRIX_WEBHOOK', 'https://khakasia.bitrix24.ru/rest/10704/kohg28vjqkuyyt2x/')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '-1003585038755'))
 ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '778115078').split(',')]
-WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://telegram-nds-bot.vercel.app')
+VERCEL_DOMAIN = os.getenv('VERCEL_DOMAIN', 'https://telegram-nds-bot.vercel.app')  # ✅ ДОМЕН
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,12 +101,8 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # ✅ Кнопка с Web App
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=button_text,
-            web_app=WebAppInfo(url=f"{WEB_APP_URL}/form")
-        )]
+        [InlineKeyboardButton(text=button_text, callback_data='get_consult')]
     ])
 
     try:
@@ -144,185 +139,71 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# ✅ Web App форма
-@app.route('/form', methods=['GET'])
-def web_form():
-    return '''
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Форма заявки НДС2026</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: #f5f5f5;
-            padding: 20px;
-        }
-        .container {
-            max-width: 400px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 {
-            font-size: 24px;
-            margin-bottom: 20px;
-            color: #333;
-        }
-        .form-group {
-            margin-bottom: 16px;
-        }
-        label {
-            display: block;
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 6px;
-            font-weight: 500;
-        }
-        input {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 16px;
-            font-family: inherit;
-        }
-        input:focus {
-            outline: none;
-            border-color: #208ae5;
-            box-shadow: 0 0 0 3px rgba(32, 138, 229, 0.1);
-        }
-        button {
-            width: 100%;
-            padding: 12px;
-            background: #208ae5;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        button:active {
-            background: #1a6fb3;
-        }
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📋 Заявка НДС2026</h1>
-        <form id="leadForm">
-            <div class="form-group">
-                <label for="name">👤 Ваше имя:</label>
-                <input type="text" id="name" name="name" required placeholder="Иван Иванов">
-            </div>
-            <div class="form-group">
-                <label for="phone">📱 Телефон:</label>
-                <input type="tel" id="phone" name="phone" required placeholder="+7 999 123-45-67">
-            </div>
-            <button type="submit" id="submitBtn">✅ Отправить заявку</button>
-        </form>
-    </div>
+@dp.callback_query(F.data == 'get_consult')
+async def start_lead_form(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await bot.send_message(callback.from_user.id, "👋 Введите ваше имя:")
+    await state.set_state(LeadForm.waiting_name)
 
-    <script>
-        const form = document.getElementById('leadForm');
-        const submitBtn = document.getElementById('submitBtn');
-        const Telegram = window.Telegram.WebApp;
 
-        Telegram.ready();
+@dp.message(LeadForm.waiting_name)
+async def process_name(message: types.Message, state: FSMContext):
+    if not message.text or message.text.strip() == "":
+        await message.answer("❌ Имя не может быть пустым!")
+        return
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
+    await state.update_data(name=message.text.strip())
+    await message.answer("📱 Введите телефон (+7 999 123-45-67):")
+    await state.set_state(LeadForm.waiting_phone)
 
-            const name = document.getElementById('name').value.trim();
-            const phone = document.getElementById('phone').value.trim();
 
-            if (!name || !phone) {
-                alert('❌ Заполните все поля!');
-                return;
+@dp.message(LeadForm.waiting_phone)
+async def process_phone(message: types.Message, state: FSMContext):
+    if not message.text or message.text.strip() == "":
+        await message.answer("❌ Телефон не может быть пустым!")
+        return
+
+    data = await state.get_data()
+    name = data.get('name')
+    phone = message.text.strip()
+
+    if not name:
+        await message.answer("❌ Ошибка! Начните заново.")
+        await state.clear()
+        return
+
+    async with aiohttp.ClientSession() as session:
+        payload = {
+            'fields': {
+                'TITLE': 'Заявка НДС2026 с ТГ-канала',
+                'NAME': name,
+                'PHONE': [{'VALUE': phone, 'VALUE_TYPE': 'WORK'}],
+                'COMMENTS': f'Источник: Telegram канал\n👤 {name}\n📱 {phone}',
+                'SOURCE_ID': 'Telegram НДС2026'
             }
-
-            submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ Отправка...';
-
-            try {
-                const response = await fetch('/submit-lead', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: name,
-                        phone: phone,
-                        user_id: Telegram.initData.user?.id || 'unknown'
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    alert('✅ Заявка принята! Перезвоним через час');
-                    Telegram.close();
-                } else {
-                    alert('❌ Ошибка: ' + result.error);
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = '✅ Отправить заявку';
-                }
-            } catch (error) {
-                alert('❌ Ошибка сети: ' + error.message);
-                submitBtn.disabled = false;
-                submitBtn.textContent = '✅ Отправить заявку';
-            }
-        });
-    </script>
-</body>
-</html>
-    '''
-
-
-# ✅ Обработка данных из формы
-@app.route('/submit-lead', methods=['POST'])
-def submit_lead():
-    try:
-        data = request.json
-        name = data.get('name', '').strip()
-        phone = data.get('phone', '').strip()
-        user_id = data.get('user_id', 'unknown')
-
-        if not name or not phone:
-            return jsonify({'success': False, 'error': 'Заполните все поля'}), 400
-
-        # Создание лида в Bitrix24 (синхронно для простоты)
+        }
         try:
-            import requests
-            payload = {
-                'fields': {
-                    'TITLE': 'Заявка НДС2026 с ТГ-канала (Web App)',
-                    'NAME': name,
-                    'PHONE': [{'VALUE': phone, 'VALUE_TYPE': 'WORK'}],
-                    'COMMENTS': f'Источник: Telegram Web App\n👤 {name}\n📱 {phone}\n🆔 {user_id}',
-                    'SOURCE_ID': 'Telegram НДС2026 (Web App)'
-                }
-            }
-            response = requests.post(BITRIX_WEBHOOK + 'crm.lead.add.json', json=payload, timeout=10)
-            result = response.json()
-            logger.info(f"✅ Лид в Bitrix: {result.get('result')}")
+            async with session.post(BITRIX_WEBHOOK + 'crm.lead.add.json', json=payload,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                result = await resp.json()
+                if result.get('result'):
+                    logger.info(f"✅ Лид в Bitrix: {result.get('result')}")
         except Exception as e:
             logger.error(f"❌ Bitrix ошибка: {e}")
 
-        return jsonify({'success': True, 'message': 'Лид создан'})
-    except Exception as e:
-        logger.error(f"Ошибка submit-lead: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+    await message.answer(f"✅ {name}! Спасибо за заявку.\n\n"
+                         f"📱 {phone}\n\n"
+                         f"Перезвоним через час! ☎️")
+    await state.clear()
+
+
+# ✅ WEBHOOK маршруты (для Telegram обновлений)
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    json_data = request.get_json()
+    update = types.Update(**json_data)
+    await dp.feed_update(bot, update)
+    return {'ok': True}
 
 
 @app.route('/health', methods=['GET'])
@@ -331,12 +212,17 @@ def health():
 
 
 async def main():
-    logger.info("🚀 Бот запущен...")
+    # ✅ Используем WEBHOOK с доменом Vercel
+    webhook_url = f"{VERCEL_DOMAIN}/webhook"
+    logger.info(f"🌐 Webhook URL: {webhook_url}")
+
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    except KeyboardInterrupt:
-        logger.info("⏹️ Бот остановлен")
+        await bot.set_webhook(webhook_url)
+        logger.info(f"✅ Webhook установлен: {webhook_url}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка webhook: {e}")
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # Запуск Flask
+    app.run(host='0.0.0.0', port=8080, debug=False)
