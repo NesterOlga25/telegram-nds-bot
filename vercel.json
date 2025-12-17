@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "bot_button.py",
+      "src": "index.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "bot_button.py"
+      "dest": "index.py"
     }
   ]
 }
