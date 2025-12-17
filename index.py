@@ -5,24 +5,24 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
-import aiohttp
 from dotenv import load_dotenv
+import aiohttp
 
 load_dotenv()
 
-# ================ НАСТРОЙКИ ==================
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'ВАШ_ТОКЕН')
-BITRIX_WEBHOOK = os.getenv('BITRIX_WEBHOOK', 'https://khakasia.bitrix24.ru/rest/10704/kohg28vjqkuyyt2x/')
-CHANNEL_ID = int(os.getenv('CHANNEL_ID', '-1003585038755'))
-ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '778115078')
+# ================ НАСТРОЙКИ (ИМЕНА КАК В VERCEL) ==================
+BOT_TOKEN = os.getenv('bot_token', '8193790556:AAFDGDApuUz0tyEiK5I2bapp0VdUHF2X9PM')
+BITRIX_WEBHOOK = os.getenv('bit_web', 'https://khakasia.bitrix24.ru/rest/10704/kohg28vjqkuyyt2x/')
+CHANNEL_ID = int(os.getenv('channel_id', '-1003585038755'))
+ADMIN_IDS_STR = os.getenv('admins_ids', '778115078')
 ADMIN_IDS = [int(x) for x in ADMIN_IDS_STR.split(',') if x.strip()]
 
-WEB_APP_BASE_URL = os.getenv('WEB_APP_BASE_URL', 'https://telegram-nds-bot.vercel.app')  # без /form в конце
+WEB_APP_BASE_URL = os.getenv('web_app_url', 'https://telegram-nds-bot.vercel.app')  # без /form в конце
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,12 +103,13 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # Кнопка Web App, которая открывает форму /form
+    # URL формы (ваш WebApp на Vercel)
     web_app_url = f"{WEB_APP_BASE_URL}/form"
+
+    # В канале допустима только url-кнопка (web_app даёт BUTTON_TYPE_INVALID)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=button_text,
-                                  web_app=WebAppInfo(url=web_app_url))]
+            [InlineKeyboardButton(text=button_text, url=web_app_url)]
         ]
     )
 
@@ -140,7 +141,7 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
         await message.answer(
             f"✅ Пост #{sent_message.message_id} опубликован {media_info}!\n\n"
             f"📝 Текст: {post_text[:50]}...\n"
-            f"🔘 Кнопка (Web App): {button_text}"
+            f"🔘 Кнопка (URL на форму): {button_text}"
         )
         logger.info(f"✅ Пост создан: {sent_message.message_id} ({media_info})")
     except Exception as e:
@@ -163,7 +164,7 @@ def health():
 # ================ FLASK: WEB APP ФОРМА ==================
 @app.route('/form', methods=['GET'])
 def web_form():
-    """HTML-форма, которая открывается как Telegram Web App."""
+    """HTML-форма, которая открывается по кнопке из канала."""
     return '''
 <!DOCTYPE html>
 <html lang="ru">
@@ -274,10 +275,7 @@ def web_form():
         const res = await fetch('/submit-lead', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: name,
-            phone: phone
-          })
+          body: JSON.stringify({ name, phone })
         });
         const data = await res.json();
         if (data.success) {
@@ -303,7 +301,7 @@ def web_form():
 # ================ FLASK: ПРИЁМ ЛИДА И ОТПРАВКА В BITRIX ==================
 @app.route('/submit-lead', methods=['POST'])
 def submit_lead():
-    """Получаем имя+телефон из Web App и создаём лид в Битрикс."""
+    """Получаем имя+телефон из формы и создаём лид в Битрикс."""
     try:
         data = request.get_json() or {}
         name = (data.get('name') or '').strip()
@@ -312,7 +310,6 @@ def submit_lead():
         if not name or not phone:
             return jsonify({'success': False, 'error': 'Имя и телефон обязательны'}), 400
 
-        # Синхронный вызов Битрикс через requests удобнее, но можно и aiohttp.
         import requests
         payload = {
             'fields': {
@@ -348,6 +345,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    # Локально: запускаем бота (polling) и Flask в отдельном процессе/терминале, либо
-    # сейчас просто запускаем бота; Flask для WebApp будет на Vercel/другом хостинге.
     asyncio.run(main())
