@@ -2,9 +2,10 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+
 from flask import Flask, request, jsonify
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -12,23 +13,16 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import aiohttp
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
-# ═══════════════════════════════════════════════════════════════
-# ⚙️ НАСТРОЙКИ - ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ
-# ═══════════════════════════════════════════════════════════════
-
-BOT_TOKEN = os.getenv('BOT_TOKEN', '8193790556:AAFDGDApuUz0tyEiK5I2bapp0VdUHF2X9PM')
+# ================ НАСТРОЙКИ ==================
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'ВАШ_ТОКЕН')
 BITRIX_WEBHOOK = os.getenv('BITRIX_WEBHOOK', 'https://khakasia.bitrix24.ru/rest/10704/kohg28vjqkuyyt2x/')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '-1003585038755'))
 ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '778115078')
-ADMIN_IDS = [int(id) for id in ADMIN_IDS_STR.split(',') if id.strip()]
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://telegram-nds-bot.vercel.app')
+ADMIN_IDS = [int(x) for x in ADMIN_IDS_STR.split(',') if x.strip()]
 
-# ═══════════════════════════════════════════════════════════════
-# 🔧 ЛОГИРОВАНИЕ
-# ═══════════════════════════════════════════════════════════════
+WEB_APP_BASE_URL = os.getenv('WEB_APP_BASE_URL', 'https://telegram-nds-bot.vercel.app')  # без /form в конце
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,62 +30,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════════
-# 🤖 AIOGRAM SETUP
-# ═══════════════════════════════════════════════════════════════
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = Flask(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════
-# 🎯 STATES (состояния FSM)
-# ═══════════════════════════════════════════════════════════════
-
+# ================ FSM ТОЛЬКО ДЛЯ АДМИНА (создание поста) ==================
 class PostCreator(StatesGroup):
-    """Состояния для создания поста"""
     waiting_post_text = State()
     waiting_media = State()
     waiting_button_text = State()
 
 
-class LeadForm(StatesGroup):
-    """Состояния для формы заявки"""
-    waiting_name = State()
-    waiting_phone = State()
-
-
-# ═══════════════════════════════════════════════════════════════
-# 📝 ОБРАБОТЧИК: Создание поста
-# ═══════════════════════════════════════════════════════════════
-
 @dp.message(Command("create_post"), F.from_user.id.in_(ADMIN_IDS))
 async def start_post_creator(message: types.Message, state: FSMContext):
-    """Начало создания поста - только для админов"""
-    await message.answer(
-        "📝 Введите текст поста (можно с эмодзи и форматированием):"
-    )
+    await message.answer("📝 Введите текст поста:")
     await state.set_state(PostCreator.waiting_post_text)
 
 
 @dp.message(PostCreator.waiting_post_text)
 async def process_post_text(message: types.Message, state: FSMContext):
-    """Получение текста поста"""
     if not message.text or message.text.strip() == "":
-        await message.answer("❌ Текст не может быть пустым! Введите текст поста:")
+        await message.answer("❌ Текст не может быть пустым!")
         return
-
     await state.update_data(post_text=message.text.strip())
-    await message.answer(
-        "🖼️ Отправьте фото или видео (или напишите /skip для пропуска):"
-    )
+    await message.answer("🖼️ Отправьте фото/видео или /skip:")
     await state.set_state(PostCreator.waiting_media)
 
 
 @dp.message(PostCreator.waiting_media, F.photo)
 async def process_photo(message: types.Message, state: FSMContext):
-    """Получение фото"""
     photo_file_id = message.photo[-1].file_id
     await state.update_data(media_file_id=photo_file_id, media_type='photo')
     await message.answer("✅ Фото добавлено! Введите текст кнопки:")
@@ -100,7 +68,6 @@ async def process_photo(message: types.Message, state: FSMContext):
 
 @dp.message(PostCreator.waiting_media, F.video)
 async def process_video(message: types.Message, state: FSMContext):
-    """Получение видео"""
     video_file_id = message.video.file_id
     await state.update_data(media_file_id=video_file_id, media_type='video')
     await message.answer("✅ Видео добавлено! Введите текст кнопки:")
@@ -109,23 +76,20 @@ async def process_video(message: types.Message, state: FSMContext):
 
 @dp.message(PostCreator.waiting_media, Command("skip"))
 async def skip_media(message: types.Message, state: FSMContext):
-    """Пропуск медиа"""
     await state.update_data(media_file_id=None, media_type=None)
-    await message.answer("⏭️ Введите текст кнопки (например: '📞 Консультация'):")
+    await message.answer("⏭️ Введите текст кнопки (например: '📋 Оставить заявку'):")
     await state.set_state(PostCreator.waiting_button_text)
 
 
 @dp.message(PostCreator.waiting_media)
 async def invalid_media(message: types.Message):
-    """Ошибка - неправильный тип"""
-    await message.answer("❌ Отправьте фото или видео!\nИли используйте /skip для пропуска")
+    await message.answer("❌ Отправьте фото/видео или /skip")
 
 
 @dp.message(PostCreator.waiting_button_text)
 async def create_post_with_button(message: types.Message, state: FSMContext):
-    """Создание и публикация поста в канал"""
     if not message.text or message.text.strip() == "":
-        await message.answer("❌ Текст кнопки не может быть пустым! Введите текст:")
+        await message.answer("❌ Текст кнопки не может быть пустым!")
         return
 
     data = await state.get_data()
@@ -139,13 +103,16 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # Создание клавиатуры с кнопкой
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=button_text, callback_data='get_consult')]
-    ])
+    # Кнопка Web App, которая открывает форму /form
+    web_app_url = f"{WEB_APP_BASE_URL}/form"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=button_text,
+                                  web_app=WebAppInfo(url=web_app_url))]
+        ]
+    )
 
     try:
-        # Публикация в зависимости от типа медиа
         if media_type == 'photo':
             sent_message = await bot.send_photo(
                 chat_id=CHANNEL_ID,
@@ -173,197 +140,214 @@ async def create_post_with_button(message: types.Message, state: FSMContext):
         await message.answer(
             f"✅ Пост #{sent_message.message_id} опубликован {media_info}!\n\n"
             f"📝 Текст: {post_text[:50]}...\n"
-            f"🔘 Кнопка: {button_text}"
+            f"🔘 Кнопка (Web App): {button_text}"
         )
         logger.info(f"✅ Пост создан: {sent_message.message_id} ({media_info})")
     except Exception as e:
-        error_msg = str(e)[:100]
+        error_msg = str(e)[:200]
         await message.answer(f"❌ Ошибка публикации: {error_msg}")
         logger.error(f"❌ Ошибка при создании поста: {e}")
 
     await state.clear()
 
 
-# ═══════════════════════════════════════════════════════════════
-# 🔘 ОБРАБОТЧИК: Клик на кнопку
-# ═══════════════════════════════════════════════════════════════
-
-@dp.callback_query(F.data == 'get_consult')
-async def start_lead_form(callback: types.CallbackQuery, state: FSMContext):
-    """При клике на кнопку - начало формы"""
-    await callback.answer()
-
-    # Отправляем форму в личку
-    await bot.send_message(
-        callback.from_user.id,
-        "👋 Добро пожаловать!\n\n"
-        "Для консультации введите ваше имя:"
-    )
-    await state.set_state(LeadForm.waiting_name)
+# ================ FLASK: СТАТУС ==================
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat()
+    }), 200
 
 
-@dp.message(LeadForm.waiting_name)
-async def process_name(message: types.Message, state: FSMContext):
-    """Получение имени"""
-    if not message.text or message.text.strip() == "":
-        await message.answer("❌ Имя не может быть пустым! Введите ваше имя:")
-        return
+# ================ FLASK: WEB APP ФОРМА ==================
+@app.route('/form', methods=['GET'])
+def web_form():
+    """HTML-форма, которая открывается как Telegram Web App."""
+    return '''
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Заявка НДС 2026</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      max-width: 420px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 12px;
+    }
+    p {
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 16px;
+    }
+    .field {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+      color: #555;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    input:focus {
+      outline: none;
+      border-color: #208ae5;
+      box-shadow: 0 0 0 2px rgba(32,138,229,0.2);
+    }
+    button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      background: #208ae5;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #999;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Заявка на консультацию НДС 2026</h1>
+    <p>Оставьте контакты, и мы перезвоним в ближайшее время.</p>
+    <div class="field">
+      <label for="name">Имя</label>
+      <input id="name" type="text" placeholder="Иван Иванов" />
+    </div>
+    <div class="field">
+      <label for="phone">Телефон</label>
+      <input id="phone" type="tel" placeholder="+7 999 123-45-67" />
+    </div>
+    <button id="submitBtn">Отправить заявку</button>
+  </div>
 
-    await state.update_data(name=message.text.strip())
-    await message.answer(
-        "📱 Спасибо! Теперь введите телефон для звонка:\n\n"
-        "Формат: +7 999 123-45-67"
-    )
-    await state.set_state(LeadForm.waiting_phone)
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+
+    const btn = document.getElementById('submitBtn');
+    const nameInput = document.getElementById('name');
+    const phoneInput = document.getElementById('phone');
+
+    btn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      const phone = phoneInput.value.trim();
+
+      if (!name || !phone) {
+        alert('Пожалуйста, заполните имя и телефон');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Отправка...';
+
+      try {
+        const res = await fetch('/submit-lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: name,
+            phone: phone
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Заявка отправлена! Спасибо!');
+          tg.close();
+        } else {
+          alert('Ошибка: ' + (data.error || 'неизвестная ошибка'));
+          btn.disabled = false;
+          btn.textContent = 'Отправить заявку';
+        }
+      } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = 'Отправить заявку';
+      }
+    });
+  </script>
+</body>
+</html>
+    '''
 
 
-@dp.message(LeadForm.waiting_phone)
-async def process_phone(message: types.Message, state: FSMContext):
-    """Получение телефона и создание лида"""
-    if not message.text or message.text.strip() == "":
-        await message.answer("❌ Телефон не может быть пустым! Введите телефон:")
-        return
+# ================ FLASK: ПРИЁМ ЛИДА И ОТПРАВКА В BITRIX ==================
+@app.route('/submit-lead', methods=['POST'])
+def submit_lead():
+    """Получаем имя+телефон из Web App и создаём лид в Битрикс."""
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        phone = (data.get('phone') or '').strip()
 
-    data = await state.get_data()
-    name = data.get('name')
-    phone = message.text.strip()
-    user_id = message.from_user.id
-    username = message.from_user.username or "unknown"
+        if not name or not phone:
+            return jsonify({'success': False, 'error': 'Имя и телефон обязательны'}), 400
 
-    if not name:
-        await message.answer("❌ Ошибка! Начните заново.")
-        await state.clear()
-        return
-
-    # ✅ СОЗДАНИЕ ЛИДА В BITRIX24
-    async with aiohttp.ClientSession() as session:
+        # Синхронный вызов Битрикс через requests удобнее, но можно и aiohttp.
+        import requests
         payload = {
             'fields': {
-                'TITLE': 'Заявка НДС2026 с ТГ-канала',
+                'TITLE': 'Заявка НДС2026 с WebApp',
                 'NAME': name,
                 'PHONE': [{'VALUE': phone, 'VALUE_TYPE': 'WORK'}],
                 'COMMENTS': (
-                    f'Источник: Telegram канал\n'
-                    f'👤 Имя: {name}\n'
-                    f'📱 Телефон: {phone}\n'
-                    f'🆔 Telegram ID: {user_id}\n'
-                    f'@Username: @{username}\n'
-                    f'⏰ Дата: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}'
+                    f'Источник: Telegram WebApp (канал)\n'
+                    f'Имя: {name}\n'
+                    f'Телефон: {phone}\n'
+                    f'Создано: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}'
                 ),
                 'SOURCE_ID': 'Telegram НДС2026'
             }
         }
-        try:
-            async with session.post(
-                    BITRIX_WEBHOOK + 'crm.lead.add.json',
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                result = await resp.json()
-                if result.get('result'):
-                    lead_id = result.get('result')
-                    logger.info(f"✅ Лид создан в Bitrix: {lead_id}")
-                    await message.answer(
-                        f"✅ {name}! Спасибо за заявку.\n\n"
-                        f"📞 Телефон: {phone}\n\n"
-                        f"Наш менеджер перезвонит вам в течение одного часа! ☎️"
-                    )
-                else:
-                    logger.error(f"❌ Ошибка Bitrix: {result}")
-                    await message.answer(
-                        "⚠️ Заявка получена, но возникла ошибка при отправке в CRM.\n"
-                        "Менеджер свяжется с вами вскоре!"
-                    )
-        except Exception as e:
-            logger.error(f"❌ Ошибка при отправке в Bitrix: {e}")
-            await message.answer(
-                "⚠️ Заявка получена!\n"
-                "Менеджер перезвонит вам через время."
-            )
+        r = requests.post(BITRIX_WEBHOOK + 'crm.lead.add.json', json=payload, timeout=10)
+        resp_json = r.json()
+        logger.info(f"Bitrix lead response: {resp_json}")
 
-    logger.info(f"✅ Новая заявка: {name} | {phone} | ID: {user_id}")
-    await state.clear()
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🌐 FLASK ROUTES (для Vercel)
-# ═══════════════════════════════════════════════════════════════
-
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    """Главный webhook для Telegram"""
-    try:
-        json_data = request.get_json()
-
-        if not json_data:
-            logger.warning("⚠️ Пустой webhook запрос")
-            return jsonify({'ok': False}), 400
-
-        # Создаём Update объект
-        update = types.Update(**json_data)
-
-        # Обработка обновления
-        await dp.feed_update(bot, update)
-
-        logger.info(f"✅ Webhook обработан")
-        return jsonify({'ok': True}), 200
-    except Exception as e:
-        logger.error(f"❌ Ошибка webhook: {e}")
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Проверка статуса"""
-    return jsonify({
-        'status': 'ok',
-        'bot': 'telegram-nds-bot',
-        'timestamp': datetime.now().isoformat()
-    }), 200
-
-
-@app.route('/', methods=['GET'])
-def index():
-    """Главная страница"""
-    return jsonify({
-        'message': '✅ Telegram NDS Bot работает!',
-        'webhook_url': WEBHOOK_URL,
-        'channel': CHANNEL_ID,
-        'admins': len(ADMIN_IDS),
-        'timestamp': datetime.now().isoformat()
-    }), 200
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🚀 ИНИЦИАЛИЗАЦИЯ WEBHOOK
-# ═══════════════════════════════════════════════════════════════
-
-async def setup_webhook():
-    """Установка webhook при запуске"""
-    try:
-        webhook_info = await bot.get_webhook_info()
-
-        if webhook_info.url != WEBHOOK_URL:
-            await bot.set_webhook(WEBHOOK_URL)
-            logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+        if resp_json.get('result'):
+            return jsonify({'success': True, 'lead_id': resp_json['result']}), 200
         else:
-            logger.info(f"✅ Webhook уже установлен: {WEBHOOK_URL}")
+            return jsonify({'success': False, 'error': 'Bitrix error', 'detail': resp_json}), 500
     except Exception as e:
-        logger.error(f"❌ Ошибка при установке webhook: {e}")
+        logger.error(f"Ошибка submit-lead: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.before_request
-async def before_request():
-    """Инициализация при первом запросе"""
-    if not hasattr(app, 'webhook_initialized'):
-        await setup_webhook()
-        app.webhook_initialized = True
+# ================ ЗАПУСК БОТА (POLLING) ==================
+async def main():
+    logger.info("🚀 Бот запущен в режиме polling (локально)...")
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
-
-# ═══════════════════════════════════════════════════════════════
-# 🔌 ТОЧКА ВХОДА
-# ═══════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    logger.info("🚀 Бот запущен в режиме webhook (Vercel)")
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    # Локально: запускаем бота (polling) и Flask в отдельном процессе/терминале, либо
+    # сейчас просто запускаем бота; Flask для WebApp будет на Vercel/другом хостинге.
+    asyncio.run(main())
