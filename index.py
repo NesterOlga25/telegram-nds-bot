@@ -338,7 +338,7 @@ def submit_lead():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# ================ ЗАПУСК БОТА (POLLING) ==================
+# ================ ЗАПУСК БОТА (POLLING) ===============
 async def main():
     logger.info("🚀 Бот запущен в режиме polling (локально)...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
